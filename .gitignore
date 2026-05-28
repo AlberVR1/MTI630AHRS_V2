@@ -1,0 +1,18 @@
+# --- Directorios de salida de compilación ---
+Debug/
+Release/
+*.obj
+*.out
+*.map
+*.hex
+*.bin
+*.d
+
+# --- Configuraciones específicas de usuario/máquina ---
+.settings/
+.launches/
+.metadata/
+
+# --- Archivos temporales de CCS/Eclipse ---
+*.log
+.db
