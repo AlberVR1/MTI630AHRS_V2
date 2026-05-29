@@ -13,20 +13,49 @@
 #include <stdint.h>
 
 /* Private defines----------------------------------------------------------------------------------*/
-#define RX_BUFFER_SIZE 256//181 // Power of 2 to performance optimization in circular buffer
-#define BITMASK (RX_BUFFER_SIZE - 1) // Mask for circular buffer indexing
+#ifndef NULL
+#define NULL          0
+#endif
+
 #define MTI_FRAME_SIZE 90
 #define float32_t float
 
 typedef struct
 {
-    uint8_t buffer[RX_BUFFER_SIZE];
-    volatile uint16_t head;
-    volatile uint16_t tail;
-    volatile uint16_t count;
-    uint8_t bufferdummy[2];
-    uint16_t taildummy;
-}MIT_data_t;
+    uint8_t frame[MTI_FRAME_SIZE];
+    volatile uint8_t complete;
+} frame_buffer_t;
+
+
+typedef struct
+{
+    frame_buffer_t buffer_a;
+    frame_buffer_t buffer_b;
+    frame_buffer_t *p_write;    //ISR write here
+    frame_buffer_t *p_read;     //Main loop read here
+    volatile uint8_t frame_ready; //Flag set by ISR when a complete frame is received
+    volatile uint32_t frame_errors; //Count of frames with errors
+} UART_frame_manager_t;
+
+
+// Sync States
+typedef enum
+{
+    SYNC_0, //Waiting 0XFA
+    SYNC_1, //Waiting 0xFF
+    RX_PALOAD //Receiving datas
+} rx_state_t;
+
+
+typedef struct
+{
+    rx_state_t state;
+    uint16_t index;
+    uint32_t timeout_counter;
+} UART_rx_context_t;
+
+
+
 
 void disablemtiinterrupt(void);
 void enablemtiinterrupt(void);

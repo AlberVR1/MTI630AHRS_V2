@@ -15,7 +15,6 @@
 /* Private prototypes-------------------------------------------------------------------------------*/
 static void config(void);
 static void updateimu(void);
-static void getmeasurement(void);
 
 /* Handles----------------------------------------------------------------------------------*/
 PLL_Handle_t pllhandle;
@@ -26,11 +25,21 @@ const char gotomeasurement[] = {0xFA, 0xFF, 0x10, 0x00, 0xF1};
 const char gotoconfig[] = {0xFA, 0xFF, 0x30, 0x00, 0xD1};
 
 /* Private mti630 ahrs variables--------------------------------------------------------------------*/
-MIT_data_t mtidata = {
-	.head = 0,
-	.tail = 0,
-	.count = 0
+UART_frame_manager_t frame_mgr = {
+    .buffer_a.complete = 0,
+    .buffer_b.complete = 0,
+    .p_write = &frame_mgr.buffer_a,
+    .p_read = NULL,
+    .frame_ready = 0,
+    .frame_errors = 0,
 };
+
+UART_rx_context_t rx_ctx = {
+    .state = SYNC_0,
+    .index = 0,
+    .timeout_counter = 0
+};
+
 
 
 int main(void)
@@ -41,46 +50,15 @@ int main(void)
 
 	while(true)
 	{
-	    getmeasurement();
 	    PLL_API.delayMs(10);
 	}
 }
 
 
-static void getmeasurement(void)
-{
-    if(mtidata.count < 90) return;
-
-	uint16_t current = mtidata.tail;
-	uint16_t next = (mtidata.tail + 1) & BITMASK;
-
-	if(mtidata.buffer[current] == 0xFA && mtidata.buffer[next] == 0xFF)
-	{
-	    mtidata.bufferdummy[0] = mtidata.buffer[current];
-	    mtidata.bufferdummy[1] = mtidata.buffer[next];
-	    mtidata.taildummy = current;
-		// Valid frame header found, process frame
-		disablemtiinterrupt();
-		mtidata.tail = (mtidata.tail + 90) & BITMASK; // Move tail to next position
-		mtidata.count -= 90;
-		enablemtiinterrupt();
-	}
-	else
-	{
-		disablemtiinterrupt();
-		mtidata.tail = (mtidata.tail + 1) & BITMASK; // Move tail to next position
-		mtidata.count--;
-		enablemtiinterrupt();
-	}
-}
-
 static void updateimu(void)
 {
 	UART_API.sendString(&uart2handle,gotoconfig,sizeof(gotoconfig));
 	PLL_API.delayMs(1000);
-	mtidata.count = 0;
-	mtidata.head = 0;
-	mtidata.tail = 0;
 	UART_API.sendString(&uart2handle,gotomeasurement,sizeof(gotomeasurement));
 	PLL_API.delayMs(1000);
 
@@ -128,24 +106,83 @@ void UART2_isr(void)
 
 	while(!(UART2_FR_R & UART_FR_RXFE)) // Check if RX FIFO is not empty
 	{
-
 		uint8_t data = (uint8_t)(UART2_DR_R & 0xFF); // Read received byte
 
-		// Store data in circular buffer
-		uint16_t nextHead = (mtidata.head + 1) % (BITMASK);
+		switch(rx_ctx.state)
+		{
+			case SYNC_0:
+				if(data == 0xFA)
+				{
+					frame_mgr.p_write->frame[0] = data; // Store first byte of header
+					rx_ctx.index = 1; // Move to next index for second byte
+					rx_ctx.state = SYNC_1;	// Move to next state
+					rx_ctx.timeout_counter = 0; // Reset timeout counter
+				}
+				break;
+			case SYNC_1:
+				if(data == 0xFF)
+				{
+					frame_mgr.p_write->frame[1] = data; // Store second byte of header
+					rx_ctx.index = 2; // Move to next index for payload
+					rx_ctx.state = RX_PALOAD; // Move to payload receiving state
+				}
+				else
+				{
+					// false syncronization, reset
+					rx_ctx.state = SYNC_0;
+					if(data == 0xFA)
+					{
+						frame_mgr.p_write->frame[0] = data; // Store first byte of header
+						rx_ctx.index = 1; // Move to next index for second byte
+						rx_ctx.state = SYNC_1;	// Move to next state
+					}
+				}
+				break;
+			case RX_PALOAD:
+				frame_mgr.p_write->frame[rx_ctx.index++] = data; // Store received byte
+				rx_ctx.index++;
+				rx_ctx.timeout_counter = 0; // Reset timeout counter
 
-		if(nextHead != mtidata.tail)
-		{
-			mtidata.buffer[mtidata.head] = data; // Store byte in buffer
-			mtidata.head = nextHead; // Move head to next position
-			mtidata.count++;
-		}
-		else
-		{
-			// Buffer is full, overwrite oldest data
-			mtidata.buffer[mtidata.head] = data; // Store byte in buffer
-			mtidata.head = nextHead; // Move head to next position
-			mtidata.tail = (mtidata.tail + 1) & BITMASK; // Move tail to next position (overwrite oldest data)
+				if(rx_ctx.index >= MTI_FRAME_SIZE)
+				{
+					frame_mgr.p_write->complete = 1; // Mark frame as complete
+					frame_mgr.frame_ready = 1; // Set frame ready flag for main loop
+
+					//Interchange buffers
+					if(frame_mgr.p_write == &frame_mgr.buffer_a)
+					{
+						frame_mgr.p_write = &frame_mgr.buffer_b; // Switch to other buffer for next frame
+						frame_mgr.p_read = &frame_mgr.buffer_a; // Main loop will read from the completed buffer
+					}
+					else
+					{
+						frame_mgr.p_write = &frame_mgr.buffer_a; // Switch to other buffer for next frame
+						frame_mgr.p_read = &frame_mgr.buffer_b; // Main loop will read from the completed buffer
+					}
+
+					frame_mgr.p_write->complete = 0; // Reset complete flag for new frame
+
+					// Reset
+					rx_ctx.state = SYNC_0; // Reset state to look for next frame header
+					rx_ctx.index = 0; // Reset index for next frame
+					rx_ctx.timeout_counter = 0; // Reset timeout counter
+				}
+				else
+				{
+					// Timeout: if N bytes bass by witout datas = error
+					rx_ctx.timeout_counter++;
+					if(rx_ctx.timeout_counter > 200) 
+					{
+						frame_mgr.frame_errors++; // Increment error count
+						rx_ctx.state = SYNC_0; // Reset state to look for next frame header
+						rx_ctx.index = 0; // Reset index for next frame
+						rx_ctx.timeout_counter = 0; // Reset timeout counter
+					}
+				}
+				break;
+			default:
+			    rx_ctx.state = SYNC_0; // Should never reach here, reset state just in case
+				break;
 		}
 	}
 
