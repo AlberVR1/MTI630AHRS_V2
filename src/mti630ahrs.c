@@ -46,6 +46,9 @@
 #include "tm4c123gh6pm.h"
 
 
+
+void ahrs_callback(uint8_t data);
+
 // 
 static UART_Handle_t uart2handle;
 
@@ -260,7 +263,7 @@ static UART_Status_t Configure_UART_2(const mti630_config_t *config)
     };
     UART_Status_t uart2status = UART_API.init(&uart2handle, &uart2config);
 
-    UART_API.enableInterrupt(&uart2handle, UART_FIFO_LEVEL_1_2, NULL);
+    UART_API.enableInterrupt(&uart2handle, UART_FIFO_LEVEL_1_2, ahrs_callback);
     return uart2status;
 }
 
@@ -273,6 +276,14 @@ static uint32_t pll_get_frequency(void)
     return frequency;
 }
 
+const mti630_Interface_t MTI630_API = {
+    .init = MTI630_init,
+    .go_to_measurement = mti630_gotomeasurement,
+    .go_to_config = mti630_gotoconfig,
+    .get_measurements = getmeasurements
+};
+
+
 
 /**
  * @brief isr for UART2, which handles the reception of data from the MTi-630 AHRS sensor.
@@ -284,107 +295,83 @@ static uint32_t pll_get_frequency(void)
  * certain time frame, which helps in error handling and synchronization of the data stream.
  *
  */
-void UART2_isr(void)
-{
-	uint32_t status = UART2_MIS_R; // Read masked interrupt status
-	UART2_ICR_R = status; // Clear the interrupt
-
-	while(!(UART2_FR_R & UART_FR_RXFE)) // Check if RX FIFO is not empty
-	{
-		uint8_t data = (uint8_t)(UART2_DR_R & 0xFF); // Read received byte
-		switch(rx_ctx.state)
-		    {
-		        case SYNC_0:
-		            if(data == 0xFA)
-		            {
-		                frame_mgr.p_write->frame[0] = data; // Store first byte of header
-		                rx_ctx.index = 1; // Move to next index for second byte
-		                rx_ctx.state = SYNC_1;  // Move to next state
-		                rx_ctx.timeout_counter = 0; // Reset timeout counter
-		            }
-		            break;
-		        case SYNC_1:
-		            if(data == 0xFF)
-		            {
-		                frame_mgr.p_write->frame[1] = data; // Store second byte of header
-		                rx_ctx.index = 2; // Move to next index for payload
-		                rx_ctx.state = RX_PAYLOAD; // Move to payload receiving state
-		            }
-		            else
-		            {
-		                // false syncronization, reset
-		                rx_ctx.state = SYNC_0;
-		                if(data == 0xFA)
-		                {
-		                    frame_mgr.p_write->frame[0] = data; // Store first byte of header
-		                    rx_ctx.index = 1; // Move to next index for second byte
-		                    rx_ctx.state = SYNC_1;  // Move to next state
-		                }
-		            }
-		            break;
-		        case RX_PAYLOAD:
-		            frame_mgr.p_write->frame[rx_ctx.index++] = data; // Store received byte
-		            //rx_ctx.index++;
-		            rx_ctx.timeout_counter = 0; // Reset timeout counter
-
-		            if(rx_ctx.index >= MTI_FRAME_SIZE)
-		            {
-		                frame_mgr.p_write->complete = 1; // Mark frame as complete
-		                frame_mgr.frame_ready = 1; // Set frame ready flag for main loop
-
-		                //Interchange buffers
-		                if(frame_mgr.p_write == &frame_mgr.buffer_a)
-		                {
-		                    frame_mgr.p_write = &frame_mgr.buffer_b; // Switch to other buffer for next frame
-		                    frame_mgr.p_read = &frame_mgr.buffer_a; // Main loop will read from the completed buffer
-		                }
-		                else
-		                {
-		                    frame_mgr.p_write = &frame_mgr.buffer_a; // Switch to other buffer for next frame
-		                    frame_mgr.p_read = &frame_mgr.buffer_b; // Main loop will read from the completed buffer
-		                }
-
-		                frame_mgr.p_write->complete = 0; // Reset complete flag for new frame
-
-		                // Reset
-		                rx_ctx.state = SYNC_0; // Reset state to look for next frame header
-		                rx_ctx.index = 0; // Reset index for next frame
-		                rx_ctx.timeout_counter = 0; // Reset timeout counter
-		            }
-		            else
-		            {
-		                // Timeout: if N bytes bass by witout datas = error
-		                rx_ctx.timeout_counter++;
-		                if(rx_ctx.timeout_counter > 200)
-		                {
-		                    frame_mgr.frame_errors++; // Increment error count
-		                    rx_ctx.state = SYNC_0; // Reset state to look for next frame header
-		                    rx_ctx.index = 0; // Reset index for next frame
-		                    rx_ctx.timeout_counter = 0; // Reset timeout counter
-		                }
-		            }
-		            break;
-		        default:
-		            rx_ctx.state = SYNC_0; // Should never reach here, reset state just in case
-		            break;
-		    }
-	}
-
-}
-
-
-
-
-const mti630_Interface_t MTI630_API = {
-    .init = MTI630_init,
-    .go_to_measurement = mti630_gotomeasurement,
-    .go_to_config = mti630_gotoconfig,
-    .get_measurements = getmeasurements
-};
-
-
-
 void ahrs_callback(uint8_t data)
 {
 
+    switch(rx_ctx.state)
+        {
+            case SYNC_0:
+                if(data == 0xFA)
+                {
+                    frame_mgr.p_write->frame[0] = data; // Store first byte of header
+                    rx_ctx.index = 1; // Move to next index for second byte
+                    rx_ctx.state = SYNC_1;  // Move to next state
+                    rx_ctx.timeout_counter = 0; // Reset timeout counter
+                }
+                break;
+            case SYNC_1:
+                if(data == 0xFF)
+                {
+                    frame_mgr.p_write->frame[1] = data; // Store second byte of header
+                    rx_ctx.index = 2; // Move to next index for payload
+                    rx_ctx.state = RX_PAYLOAD; // Move to payload receiving state
+                }
+                else
+                {
+                    // false syncronization, reset
+                    rx_ctx.state = SYNC_0;
+                    if(data == 0xFA)
+                    {
+                        frame_mgr.p_write->frame[0] = data; // Store first byte of header
+                        rx_ctx.index = 1; // Move to next index for second byte
+                        rx_ctx.state = SYNC_1;  // Move to next state
+                    }
+                }
+                break;
+            case RX_PAYLOAD:
+                frame_mgr.p_write->frame[rx_ctx.index++] = data; // Store received byte
+                //rx_ctx.index++;
+                rx_ctx.timeout_counter = 0; // Reset timeout counter
+
+                if(rx_ctx.index >= MTI_FRAME_SIZE)
+                {
+                    frame_mgr.p_write->complete = 1; // Mark frame as complete
+                    frame_mgr.frame_ready = 1; // Set frame ready flag for main loop
+
+                    //Interchange buffers
+                    if(frame_mgr.p_write == &frame_mgr.buffer_a)
+                    {
+                        frame_mgr.p_write = &frame_mgr.buffer_b; // Switch to other buffer for next frame
+                        frame_mgr.p_read = &frame_mgr.buffer_a; // Main loop will read from the completed buffer
+                    }
+                    else
+                    {
+                        frame_mgr.p_write = &frame_mgr.buffer_a; // Switch to other buffer for next frame
+                        frame_mgr.p_read = &frame_mgr.buffer_b; // Main loop will read from the completed buffer
+                    }
+
+                    frame_mgr.p_write->complete = 0; // Reset complete flag for new frame
+
+                    // Reset
+                    rx_ctx.state = SYNC_0; // Reset state to look for next frame header
+                    rx_ctx.index = 0; // Reset index for next frame
+                    rx_ctx.timeout_counter = 0; // Reset timeout counter
+                }
+                else
+                {
+                    // Timeout: if N bytes bass by witout datas = error
+                    rx_ctx.timeout_counter++;
+                    if(rx_ctx.timeout_counter > 200)
+                    {
+                        frame_mgr.frame_errors++; // Increment error count
+                        rx_ctx.state = SYNC_0; // Reset state to look for next frame header
+                        rx_ctx.index = 0; // Reset index for next frame
+                        rx_ctx.timeout_counter = 0; // Reset timeout counter
+                    }
+                }
+                break;
+            default:
+                rx_ctx.state = SYNC_0; // Should never reach here, reset state just in case
+                break;
+        }
 }

@@ -52,7 +52,6 @@
 
 /* Private prototypes-------------------------------------------------------------------------------*/
 static void config(void);
-void ahrs_callback(uint8_t data);
 
 /* Handles----------------------------------------------------------------------------------*/
 UART_Handle_t uart1handle;
