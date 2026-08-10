@@ -38,9 +38,8 @@
 #define SYSCTL_RIS_PLLLRIS      0x00000040  // PLL Lock Raw Interrupt Status
 
 /* Private Function Prototypes ---------------------------------------------------------------------*/
-static PLL_Status_t PLL_InitHardware(PLL_Handle_t *handle);
+static PLL_Status_t PLL_InitHardware(PLL_Frequency_t frequency);
 static uint32_t PLL_CalculateFrequency(uint32_t frequency_MHz);
-static bool PLL_IsValidHandle(const PLL_Handle_t *handle);
 static bool PLL_IsValidFrequency(uint32_t frequency_MHz);
 
 /* Private Implementation --------------------------------------------------------------------------*/
@@ -51,9 +50,9 @@ static bool PLL_IsValidFrequency(uint32_t frequency_MHz);
  * @param frequency Desired frequency in MHz
  * @return PLL_Status_t Status of the initialization
  */
-PLL_Status_t PLL_Init(PLL_Handle_t *handle, PLL_Frequency_t frequency)
+PLL_Status_t PLL_Init(PLL_Frequency_t frequency)
 {
-    if(!handle && !frequency) {
+    if(!frequency) {
         return PLL_STATUS_INVALID_PARAM;
     }
 
@@ -61,15 +60,9 @@ PLL_Status_t PLL_Init(PLL_Handle_t *handle, PLL_Frequency_t frequency)
         return PLL_STATUS_INVALID_PARAM;
     }
 
-    // Initialize handle
-    handle->frequency = frequency;
-    handle->usePLL = false;
-
     // Initialize hardware
-    PLL_Status_t status = PLL_InitHardware(handle);
-    if(status == PLL_STATUS_SUCCESS) {
-        handle->usePLL = true;
-    }
+    PLL_Status_t status = PLL_InitHardware(frequency);
+    
     return status;
 }
 
@@ -80,9 +73,9 @@ PLL_Status_t PLL_Init(PLL_Handle_t *handle, PLL_Frequency_t frequency)
  * @return PLL_Status_t Status of the initialization
  *
  */
-static PLL_Status_t PLL_InitHardware(PLL_Handle_t *handle)
+static PLL_Status_t PLL_InitHardware(PLL_Frequency_t frequency)
 {
-    if(!PLL_IsValidHandle(handle)) {
+    if(!PLL_IsValidFrequency(frequency)) {
         return PLL_STATUS_INVALID_PARAM;
     }
     // 0: Configure the system to use RCC2 for advanced features
@@ -98,7 +91,7 @@ static PLL_Status_t PLL_InitHardware(PLL_Handle_t *handle)
     // 3: Activate the PLL by clearing PWRDN.
     SYSCTL_RCC2_R &= ~SYSCTL_RCC2_PWRDN2;
     // 4: Set the desired system divider and the system clock to use the PLL.
-    uint32_t pll_sysdiv2 = PLL_CalculateFrequency(handle->frequency);
+    uint32_t pll_sysdiv2 = PLL_CalculateFrequency(frequency);
     SYSCTL_RCC2_R |= SYSCTL_RCC2_DIV400; // Use 400 MHz PLL
     SYSCTL_RCC2_R = (SYSCTL_RCC2_R & ~0X1FC00000)   //Clear system clock divider field
                     + (pll_sysdiv2 << 22);          // Configure for desired system clock
@@ -109,17 +102,6 @@ static PLL_Status_t PLL_InitHardware(PLL_Handle_t *handle)
     return PLL_STATUS_SUCCESS;
 }
 
-/**
- * @brief Validate PLL handle
- *
- * @param handle Pointer to PLL handle to validate
- * @return true if handle is valid, false otherwise
- *
- */
-static bool PLL_IsValidHandle(const PLL_Handle_t *handle)
-{
-    return (handle != NULL && handle->usePLL) ? false : true;
-}
 
 /**
  * @brief Validate PLL frequency

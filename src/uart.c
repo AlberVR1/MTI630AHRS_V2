@@ -11,7 +11,7 @@
  */
 
 /* Includes --------------------------------------------------------------------------------*/
-#include "UART.h"
+#include "uart.h"
 
 /* Private Defines -------------------------------------------------------------------------*/
 #ifndef NULL
@@ -23,6 +23,52 @@
 #define SYSCTL_PRGPIO_R         (*((volatile uint32_t *)0x400FEA08))
 #define SYSCTL_RCGCUART_R       (*((volatile uint32_t *)0x400FE618))
 #define SYSCTL_PRUART_R         (*((volatile uint32_t *)0x400FEA18))
+
+
+#define UART0_MIS_R             (*((volatile uint32_t *)0x4000C040))
+#define UART0_ICR_R             (*((volatile uint32_t *)0x4000C044))
+#define UART0_DR_R              (*((volatile uint32_t *)0x4000C000))
+#define UART0_FR_R              (*((volatile uint32_t *)0x4000C018))
+
+#define UART1_MIS_R             (*((volatile uint32_t *)0x4000D040))
+#define UART1_ICR_R             (*((volatile uint32_t *)0x4000D044))
+#define UART1_DR_R              (*((volatile uint32_t *)0x4000D000))
+#define UART1_FR_R              (*((volatile uint32_t *)0x4000D018))
+
+
+#define UART2_MIS_R             (*((volatile uint32_t *)0x4000E040))
+#define UART2_ICR_R             (*((volatile uint32_t *)0x4000E044))
+#define UART2_DR_R              (*((volatile uint32_t *)0x4000E000))
+#define UART2_FR_R              (*((volatile uint32_t *)0x4000E018))
+
+#define UART3_MIS_R             (*((volatile uint32_t *)0x4000F040))
+#define UART3_ICR_R             (*((volatile uint32_t *)0x4000F044))
+#define UART3_DR_R              (*((volatile uint32_t *)0x4000F000))
+#define UART3_FR_R              (*((volatile uint32_t *)0x4000F018))
+
+#define UART4_MIS_R             (*((volatile uint32_t *)0x40010040))
+#define UART4_ICR_R             (*((volatile uint32_t *)0x40010044))
+#define UART4_DR_R              (*((volatile uint32_t *)0x40010000))
+#define UART4_FR_R              (*((volatile uint32_t *)0x40010018))
+
+#define UART5_MIS_R             (*((volatile uint32_t *)0x40011040))
+#define UART5_ICR_R             (*((volatile uint32_t *)0x40011044))
+#define UART5_DR_R              (*((volatile uint32_t *)0x40011000))
+#define UART5_FR_R              (*((volatile uint32_t *)0x40011018))
+
+#define UART6_MIS_R             (*((volatile uint32_t *)0x40012040))
+#define UART6_ICR_R             (*((volatile uint32_t *)0x40012044))
+#define UART6_DR_R              (*((volatile uint32_t *)0x40012000))
+#define UART6_FR_R              (*((volatile uint32_t *)0x40012018))
+
+#define UART7_MIS_R             (*((volatile uint32_t *)0x40013040))
+#define UART7_ICR_R             (*((volatile uint32_t *)0x40013044))
+#define UART7_DR_R              (*((volatile uint32_t *)0x40013000))
+#define UART7_FR_R              (*((volatile uint32_t *)0x40013018))
+
+#define UART_MIS_RXMIS          0x00000010  // UART Receive Masked Interrupt
+                                            // Status
+
 
 /* GPIO Register Offsets */
 #define GPIO_OFFSET_AFSEL       0x420
@@ -134,6 +180,10 @@ static const UART_PinConfig_t UART_PIN_CONFIGS[] = {
 static const uint8_t UART_IRQ_NUMBERS[] = {
     5, 6, 33, 59, 60, 61, 62, 63
 };
+
+
+// Interrupts
+static UART_Handle_t* uart_interrupt_handles[UART_MODULE_COUNT];
 
 /* Private Function Prototypes -------------------------------------------------------------*/
 static bool UART_IsValidHandle(const UART_Handle_t *handle);
@@ -395,6 +445,7 @@ static UART_Status_t UART_Init(UART_Handle_t *handle, const UART_Config_t *confi
     // Initialize handle
     handle->isInitialized = false;
     handle->interruptEnabled = false;
+    handle->interrupt_callback = NULL;
 
     // Initialize clock
     UART_Status_t status = UART_InitClock(config->module);
@@ -411,6 +462,9 @@ static UART_Status_t UART_Init(UART_Handle_t *handle, const UART_Config_t *confi
     // Configure UART module
     status = UART_ConfigureModule(handle, config);
 
+
+    //Store handle for interrupt handling if needed
+    uart_interrupt_handles[config->module] = handle;
     return status;
 }
 
@@ -562,11 +616,14 @@ static UART_Status_t UART_ReceiveByte(UART_Handle_t *handle, uint8_t *data)
  * @param level FIFO interrupt level
  * @return UART_STATUS_SUCCESS on success, error code otherwise
  */
-static UART_Status_t UART_EnableInterrupt(UART_Handle_t *handle, UART_FIFOLevel_t level)
+static UART_Status_t UART_EnableInterrupt(UART_Handle_t *handle, UART_FIFOLevel_t level, void (*callback)(uint8_t))
 {
     if (!UART_IsValidHandle(handle)) {
         return UART_STATUS_INVALID_PARAM;
     }
+
+    //store callback
+    handle->interrupt_callback = callback;
 
     uint32_t uartBase = UART_GetBaseAddress(handle->module);
     volatile uint32_t *uartIfls = (volatile uint32_t *)(uartBase + UART_OFFSET_IFLS);
@@ -678,6 +735,195 @@ static bool UART_IsRxReady(UART_Handle_t *handle)
 
     return ((*uartFr & UART_FR_RXFE) == 0);
 }
+
+
+
+//-------------------------------- INTERRUPTS ---------------------------------------
+
+/**
+ * @brief
+ */
+void uart0_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART0_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART0_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART0_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_0];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART1_ICR_R = int_status;
+}
+
+/**
+ * @brief
+ */
+void uart1_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART1_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART1_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART1_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_1];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART1_ICR_R = int_status;
+}
+
+/**
+ * @breif
+ */
+void uart2_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART2_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART2_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART2_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_2];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART2_ICR_R = int_status;
+}
+
+/**
+ * @brief
+ */
+void uart3_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART3_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART3_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART3_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_3];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART3_ICR_R = int_status;
+}
+
+/**
+ * @brief
+ */
+void uart4_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART4_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART4_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART4_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_4];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART4_ICR_R = int_status;
+}
+
+/**
+ * @brief
+ */
+void uart5_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART5_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART5_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART5_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_5];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART5_ICR_R = int_status;
+}
+
+/**
+ * @brief
+ */
+void uart6_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART6_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART6_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART6_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_6];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART6_ICR_R = int_status;
+}
+
+/**
+ * @breif
+ */
+void uart7_isr(void)
+{
+    uint8_t data = 0;
+    uint32_t int_status = UART7_MIS_R;
+
+    if(int_status & UART_MIS_RXMIS)
+    {
+        while(!(UART7_FR_R & UART_FR_RXFE))
+        {
+            data = (uint8_t)(UART7_DR_R & 0xFF);
+
+            UART_Handle_t* handle = uart_interrupt_handles[UART_MODULE_7];
+            if(handle && handle->interrupt_callback) {
+                handle->interrupt_callback(data);
+            }
+        }
+    }
+    UART7_ICR_R = int_status;
+}
+
 
 /* Public API Instance ---------------------------------------------------------------------*/
 const UART_Interface_t UART_API = {

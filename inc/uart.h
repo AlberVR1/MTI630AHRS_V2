@@ -35,7 +35,8 @@ typedef enum {
     UART_MODULE_4 = 4,  ///< UART4 - Port C (PC4/PC5)
     UART_MODULE_5 = 5,  ///< UART5 - Port E (PE4/PE5)
     UART_MODULE_6 = 6,  ///< UART6 - Port D (PD4/PD5)
-    UART_MODULE_7 = 7   ///< UART7 - Port E (PE0/PE1)
+    UART_MODULE_7 = 7,  ///< UART7 - Port E (PE0/PE1)
+    UART_MODULE_COUNT,
 } UART_Module_t;
 
 /**
@@ -67,11 +68,11 @@ typedef enum {
  * @brief UART FIFO level configuration
  */
 typedef enum {
-    UART_FIFO_LEVEL_1_8 = 0,  ///< Interrupt at 1/8 full    2 bytes
-    UART_FIFO_LEVEL_1_4 = 1,  ///< Interrupt at 1/4 full    4 bytes
-    UART_FIFO_LEVEL_1_2 = 2,  ///< Interrupt at 1/2 full (default)  8 bytes
-    UART_FIFO_LEVEL_3_4 = 3,  ///< Interrupt at 3/4 full    12 bytes
-    UART_FIFO_LEVEL_7_8 = 4   ///< Interrupt at 7/8 full    14 bytes
+    UART_FIFO_LEVEL_1_8 = 0,  ///< Interrupt at 1/8 full
+    UART_FIFO_LEVEL_1_4 = 1,  ///< Interrupt at 1/4 full
+    UART_FIFO_LEVEL_1_2 = 2,  ///< Interrupt at 1/2 full (default)
+    UART_FIFO_LEVEL_3_4 = 3,  ///< Interrupt at 3/4 full
+    UART_FIFO_LEVEL_7_8 = 4   ///< Interrupt at 7/8 full
 } UART_FIFOLevel_t;
 
 /* Public Structures -----------------------------------------------------------------------*/
@@ -93,14 +94,15 @@ typedef struct {
  * @brief UART handle structure - Contains module state
  */
 typedef struct {
-    UART_Module_t module;           ///< Configured UART module
-    UART_BaudRate_t baudRate;       ///< Current baud rate
-    UART_Status_t status;           ///< Current status
-    bool isInitialized;             ///< Initialization flag
-    bool txEnabled;                 ///< TX enabled flag
-    bool rxEnabled;                 ///< RX enabled flag
-    bool fifoEnabled;               ///< FIFO enabled flag
-    bool interruptEnabled;          ///< Interrupt enabled flag
+    UART_Module_t module;               ///< Configured UART module
+    UART_BaudRate_t baudRate;           ///< Current baud rate
+    UART_Status_t status;               ///< Current status
+    bool isInitialized;                 ///< Initialization flag
+    bool txEnabled;                     ///< TX enabled flag
+    bool rxEnabled;                     ///< RX enabled flag
+    bool fifoEnabled;                   ///< FIFO enabled flag
+    bool interruptEnabled;              ///< Interrupt enabled flag
+    void (*interrupt_callback)(uint8_t); // Interrupt callback function
 } UART_Handle_t;
 
 /* Public API Interface --------------------------------------------------------------------*/
@@ -114,7 +116,7 @@ typedef struct {
     UART_Status_t (*sendByte)(UART_Handle_t *handle, uint8_t data);
     UART_Status_t (*sendString)(UART_Handle_t *handle, const char *string, uint32_t length);
     UART_Status_t (*receiveByte)(UART_Handle_t *handle, uint8_t *data);
-    UART_Status_t (*enableInterrupt)(UART_Handle_t *handle, UART_FIFOLevel_t level);
+    UART_Status_t (*enableInterrupt)(UART_Handle_t *handle, UART_FIFOLevel_t level, void (*callback)(uint8_t));
     UART_Status_t (*disableInterrupt)(UART_Handle_t *handle);
     UART_Status_t (*flush)(UART_Handle_t *handle);
     bool (*isTxReady)(UART_Handle_t *handle);

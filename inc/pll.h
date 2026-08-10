@@ -46,16 +46,10 @@ typedef enum {
     PLL_STATUS_NOT_INITIALIZED
 }PLL_Status_t;
 
-/* Public Structures -------------------------------------------------------------------------------*/
-typedef struct {
-    PLL_Frequency_t frequency;  // Desired system frequency
-    PLL_Status_t status;        // Status of the PLL configuration
-    bool usePLL;                // Flag to indicate if PLL should be used
-}PLL_Handle_t;
 
 /* Public Function Pointers Structure --------------------------------------------------------------*/
 typedef struct {
-    PLL_Status_t (*init)(PLL_Handle_t *handle, PLL_Frequency_t frequency);
+    PLL_Status_t (*init)(PLL_Frequency_t frequency);
     uint32_t (*getPLLFrequency)(void);
     void (*delayMs)(uint32_t ms);
 }PLL_Interface_t;
